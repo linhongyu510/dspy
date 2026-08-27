@@ -9,17 +9,55 @@ The documentation site is published as one static site managed by Zensical's
   the exact released DSPy wheel. `/X.Y/` redirects to the newest imported
   patch in that minor line.
 
-Mike owns the generated `versioned-docs` branch, `versions.json`, default
-redirect, minor aliases, and the selector rendered by Material or Zensical.
-The official fork is pinned to an exact commit because it is currently
-distributed from GitHub rather than PyPI. `releases.json` remains the source of
-truth only for the one-time historical bootstrap. Prereleases are never
-published as stable documentation routes.
+Mike owns `versions.json`, the default redirect, minor aliases, and the
+selector rendered by Material or Zensical. The official fork is pinned to an
+exact commit because it is currently distributed from GitHub rather than
+PyPI. `releases.json` remains the source of truth only for the one-time
+historical bootstrap. Prereleases are never published as stable documentation
+routes.
 
-The generated branch is the deployment output: configure the existing static
-host to deploy `versioned-docs` instead of rebuilding the source branch. Mike
-stores every release in that one branch; it does not create one hosting
-deployment or project per version.
+The one-time bootstrap and Current review happen on the generated
+`versioned-docs` branch. At cutover, that exact reviewed tree is committed onto
+the existing deployment repository's `master` branch. Vercel remains on
+`master`; subsequent Current and release jobs update that branch through Mike.
+Every version remains in one deployment branch, not a separate hosting project
+or deployment.
+
+## Production cutover and rollback
+
+Cutover is a one-time operator action, not a permanent workflow. In a fresh
+clone of `krypticmouse/dspy-docs`, first verify the reviewed
+`versioned-docs` branch, then preserve and promote it:
+
+```bash
+git fetch origin master versioned-docs
+test -z "$(git ls-remote --heads origin legacy-material-backup)"
+git push origin origin/master:refs/heads/legacy-material-backup
+
+git switch -C promote-versioned-docs origin/master
+git config user.name github-actions
+git config user.email github-actions@github.com
+git read-tree --reset -u origin/versioned-docs
+git commit -m "Promote versioned documentation"
+test "$(git rev-parse HEAD^{tree})" = "$(git rev-parse origin/versioned-docs^{tree})"
+git push origin HEAD:master
+```
+
+The backup push intentionally fails if `legacy-material-backup` already exists,
+so a later cutover cannot silently replace the rollback point. To roll back,
+restore its tree with another normal commit:
+
+```bash
+git fetch origin master legacy-material-backup
+git switch -C rollback-material-docs origin/master
+git read-tree --reset -u origin/legacy-material-backup
+git commit -m "Restore Material documentation"
+git push origin HEAD:master
+```
+
+Current and release publishing fail closed unless `master` already contains
+Mike's `versions.json`. Merging the automation before promotion therefore
+cannot silently perform the cutover.
 
 ## Historical fidelity
 
@@ -62,7 +100,7 @@ Production builds use Mike's redirect aliases so `/X.Y/` contains redirect
 HTML rather than another asset copy. They also remove source maps and minify
 HTML with whitespace-sensitive elements preserved. Both renderers pass the
 same static and browser parity gates after this optimization. Git deduplicates
-byte-identical files in the generated branch; no content-addressed asset
+byte-identical files in the deployment repository; no content-addressed asset
 rewriter or separate snapshot store is introduced.
 
 ## Zensical parity gate
@@ -115,5 +153,5 @@ on affected pull requests and manual dispatches, uploads reports and
 screenshots even when a gate fails, and then enforces both reports. Current and
 future release workflows explicitly select `zensical`. The release workflow
 builds only the new tag, gives its minor alias to the newest patch, and pushes
-the updated generated branch. Historical snapshots remain immutable and are
+the updated production branch. Historical snapshots remain immutable and are
 never rebuilt during or after the cutover.
